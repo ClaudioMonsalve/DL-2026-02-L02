@@ -16,7 +16,6 @@ from src.models.blocks import Conv1DBackbone
 
 class CoralLayer(nn.Module):
     """
-    TODO(alumno):
     Capa de salida CORAL.
 
     Debe producir K-1 logits acumulativos a partir de un vector de
@@ -39,18 +38,26 @@ class CoralLayer(nn.Module):
         super().__init__()
         self.input_size = input_size
         self.num_classes = num_classes
-        # TODO(alumno): definir la proyeccion compartida y los parametros
-        # de los sesgos ordenados.
+        self.score = nn.Linear(input_size, 1, bias=False)
+        self.first_bias = nn.Parameter(torch.zeros(1))
+        if num_classes > 2:
+            self.bias_differences = nn.Parameter(torch.zeros(num_classes - 2))
+        else:
+            self.register_parameter("bias_differences", None)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError(
-            "TODO(alumno): implementar CoralLayer.forward() en src/models/coral.py."
-        )
+        if self.bias_differences is None:
+            ordered_biases = self.first_bias
+        else:
+            differences = torch.nn.functional.softplus(self.bias_differences)
+            ordered_biases = torch.cat(
+                (self.first_bias, self.first_bias - torch.cumsum(differences, dim=0))
+            )
+        return self.score(inputs) + ordered_biases
 
 
 class Conv1DCoralNet(nn.Module):
     """
-    TODO(alumno):
     Conv1D + MLP con cabeza CORAL.
 
     Arquitectura sugerida:
@@ -79,9 +86,7 @@ class Conv1DCoralNet(nn.Module):
             hidden_dim=hidden_dim,
             dropout=dropout,
         )
-        # TODO(alumno): crear la cabeza CORAL sobre self.backbone.output_dim.
+        self.head = CoralLayer(self.backbone.output_dim, num_classes)
 
     def forward(self, inputs: torch.Tensor) -> torch.Tensor:
-        raise NotImplementedError(
-            "TODO(alumno): implementar Conv1DCoralNet.forward() en src/models/coral.py."
-        )
+        return self.head(self.backbone(inputs))

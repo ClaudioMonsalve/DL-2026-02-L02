@@ -1,19 +1,10 @@
-"""
-Tarea ordinal CORAL.
-
-La clase CoralTask ya conecta la perdida y la prediccion con el Trainer.
-Las cuatro funciones matematicas son TODO(alumno):
-
-1. labels_to_levels
-2. coral_loss
-3. effective_number_weights
-4. logits_to_ordinal_predictions
-"""
+"""Codificacion, perdida y prediccion para la tarea ordinal CORAL."""
 
 from __future__ import annotations
 
 import numpy as np
 import torch
+import torch.nn.functional as F
 
 from src.config import TrainingConfig
 from src.tasks.base import ClassificationTask, LossFunction
@@ -21,7 +12,6 @@ from src.tasks.base import ClassificationTask, LossFunction
 
 def labels_to_levels(labels: torch.Tensor, num_classes: int) -> torch.Tensor:
     """
-    TODO(alumno):
     Convierte clases enteras a umbrales binarios acumulativos.
 
     Ejemplo:
@@ -32,9 +22,13 @@ def labels_to_levels(labels: torch.Tensor, num_classes: int) -> torch.Tensor:
     - salida: (batch_size, num_classes - 1) float32
     """
 
-    raise NotImplementedError(
-        "TODO(alumno): implementar labels_to_levels() en src/tasks/ordinal_task.py."
-    )
+    if num_classes < 2:
+        raise ValueError("num_classes debe ser al menos 2.")
+    if labels.ndim != 1:
+        raise ValueError("labels debe tener forma (batch_size,).")
+
+    thresholds = torch.arange(num_classes - 1, device=labels.device)
+    return (labels.to(torch.long).unsqueeze(1) > thresholds).to(torch.float32)
 
 
 def coral_loss(
@@ -44,7 +38,6 @@ def coral_loss(
     class_weights: torch.Tensor | None = None,
 ) -> torch.Tensor:
     """
-    TODO(alumno):
     BCE con logits sobre los K-1 umbrales ordinales.
 
     Pistas:
@@ -61,9 +54,26 @@ def coral_loss(
     - salida: escalar
     """
 
-    raise NotImplementedError(
-        "TODO(alumno): implementar coral_loss() en src/tasks/ordinal_task.py."
+    if logits.ndim != 2 or logits.shape[1] != num_classes - 1:
+        raise ValueError("logits debe tener forma (batch_size, num_classes - 1).")
+    if labels.ndim != 1 or labels.shape[0] != logits.shape[0]:
+        raise ValueError("labels debe tener forma (batch_size,) y coincidir con logits.")
+
+    levels = labels_to_levels(labels.to(logits.device), num_classes)
+    per_threshold_loss = F.binary_cross_entropy_with_logits(
+        logits, levels, reduction="none"
     )
+    per_sample_loss = per_threshold_loss.sum(dim=1)
+
+    if class_weights is not None:
+        if class_weights.ndim != 1 or class_weights.numel() != num_classes:
+            raise ValueError("class_weights debe tener un peso por clase.")
+        sample_weights = class_weights.to(
+            device=logits.device, dtype=per_sample_loss.dtype
+        )[labels.to(device=logits.device, dtype=torch.long)]
+        per_sample_loss = per_sample_loss * sample_weights
+
+    return per_sample_loss.mean()
 
 
 def effective_number_weights(
@@ -72,7 +82,6 @@ def effective_number_weights(
     beta: float = 0.99,
 ) -> torch.Tensor:
     """
-    TODO(alumno):
     Pesos por numero efectivo de muestras (Cui et al., CVPR 2019):
 
         w_c = (1 - beta) / (1 - beta ** n_c)
@@ -85,9 +94,28 @@ def effective_number_weights(
     - salida: (num_classes,) float32
     """
 
-    raise NotImplementedError(
-        "TODO(alumno): implementar effective_number_weights() en src/tasks/ordinal_task.py."
-    )
+    if num_classes < 2:
+        raise ValueError("num_classes debe ser al menos 2.")
+    if not 0.0 < beta < 1.0:
+        raise ValueError("beta debe estar en el intervalo (0, 1).")
+
+    labels = np.asarray(labels).reshape(-1)
+    if not np.issubdtype(labels.dtype, np.integer):
+        raise ValueError("labels debe contener etiquetas enteras.")
+    if np.any(labels < 0) or np.any(labels >= num_classes):
+        raise ValueError("Las etiquetas deben estar entre 0 y num_classes - 1.")
+
+    counts = np.bincount(labels.astype(np.int64, copy=False), minlength=num_classes)
+    present = counts > 0
+    weights = np.zeros(num_classes, dtype=np.float64)
+    if np.any(present):
+        effective_counts = -np.expm1(counts[present] * np.log(beta))
+        weights[present] = (1.0 - beta) / effective_counts
+        weights /= weights.mean()
+    else:
+        weights.fill(1.0)
+
+    return torch.tensor(weights, dtype=torch.float32)
 
 
 @torch.no_grad()
@@ -96,7 +124,6 @@ def logits_to_ordinal_predictions(
     threshold: float = 0.5,
 ) -> torch.Tensor:
     """
-    TODO(alumno):
     Convierte logits CORAL en una clase entera.
 
     Pista:
@@ -108,10 +135,12 @@ def logits_to_ordinal_predictions(
     - salida: (batch_size,) int64
     """
 
-    raise NotImplementedError(
-        "TODO(alumno): implementar logits_to_ordinal_predictions() "
-        "en src/tasks/ordinal_task.py."
-    )
+    if logits.ndim != 2:
+        raise ValueError("logits debe tener forma (batch_size, num_thresholds).")
+    if not 0.0 <= threshold <= 1.0:
+        raise ValueError("threshold debe estar en el intervalo [0, 1].")
+
+    return torch.sigmoid(logits).ge(threshold).sum(dim=1).to(torch.int64)
 
 
 class CoralLoss:
@@ -133,8 +162,8 @@ class CoralTask(ClassificationTask):
     """
     Clasificacion ordinal con K-1 umbrales acumulativos.
 
-    Ya entregado: la conexion con el Trainer y el calculo de pesos por fold.
-    TODO(alumno): las funciones de este modulo que lanzan NotImplementedError.
+    Conecta la perdida y la prediccion ordinales con el Trainer y calcula los
+    pesos de clase a partir del fold de entrenamiento.
 
     Formas:
         logits: (B, K-1)
