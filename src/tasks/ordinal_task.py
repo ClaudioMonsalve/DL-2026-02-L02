@@ -140,7 +140,7 @@ def logits_to_ordinal_predictions(
     if not 0.0 <= threshold <= 1.0:
         raise ValueError("threshold debe estar en el intervalo [0, 1].")
 
-    return torch.sigmoid(logits).ge(threshold).sum(dim=1).to(torch.int64)
+    return torch.sigmoid(logits).gt(threshold).sum(dim=1).to(torch.int64)
 
 
 class CoralLoss:

@@ -1,9 +1,7 @@
-"""
-Experimento 2: Conv1D + MLP con cabeza ordinal CORAL.
+"""Experimento 2: Conv1D + MLP con cabeza ordinal CORAL.
 
-Este archivo contiene esqueletos que el alumno debe completar.
-El tronco Conv1D + MLP (Conv1DBackbone) ya esta implementado y es el mismo
-del experimento Softmax: solo cambia la cabeza de salida.
+El tronco Conv1D + MLP (Conv1DBackbone) es el mismo del experimento Softmax;
+este modelo conecta una cabeza de salida ordinal CORAL.
 """
 
 from __future__ import annotations
